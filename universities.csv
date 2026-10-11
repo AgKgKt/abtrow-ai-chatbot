@@ -1,0 +1,8 @@
+university,country,city,level,subjects,intakes,ielts_min,tuition_per_year,scholarship,url,notes
+University of Hertfordshire,UK,Hatfield,UG;PG,Business;Computer Science;Engineering;Data Science;Nursing,Sep;Jan,,,,https://www.herts.ac.uk,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+Edge Hill University,UK,Ormskirk,UG;PG,Business;Computer Science;Engineering;Education;Psychology,Sep;Jan,,,,https://www.edgehill.ac.uk,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+Coventry University,UK,Coventry,UG;PG,Business;Computer Science;Engineering;Data Science;Public Health,Sep;Jan;May,,,,https://www.coventry.ac.uk,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+University of Greenwich,UK,London,UG;PG,Business;Computer Science;Engineering;Data Science,Sep;Jan,,,,https://www.gre.ac.uk,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+Anglia Ruskin University,UK,Cambridge,UG;PG,Business;Computer Science;Nursing;Public Health,Sep;Jan,,,,https://www.aru.ac.uk,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+Technical University of Munich,Germany,Munich,PG,Engineering;Computer Science;Data Science,Oct;Apr,,,,https://www.tum.de,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees
+James Cook University Singapore,Singapore,Singapore,UG;PG,Business;Computer Science;Psychology;Data Science,Feb;Jul;Nov,,,,https://www.jcu.edu.sg,SAMPLE ROW - replace URL with the exact course page and fill in IELTS/fees

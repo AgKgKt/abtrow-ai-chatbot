@@ -1,11 +1,26 @@
-from flask import Flask, request, jsonify, render_template_string
-from openai import OpenAI
+import json
 import os
+
+from flask import Flask, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from openai import OpenAI
+
+from universities import filter_options, search_universities
 
 app = Flask(__name__)
 
 # Get API key from environment (Render → Environment → OPENAI_API_KEY)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+LOGO_URL = os.environ.get("LOGO_URL", "")  # optional: your logo image URL
+
+# Protects the OpenAI bill from spam / bots
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
+
+MAX_HISTORY = 12          # messages kept from the conversation
+MAX_MESSAGE_CHARS = 2000  # per message
+MAX_TOOL_ROUNDS = 3
 
 ABTROW_PROMPT = """
 You are Abtrow AI — a professional, friendly, and knowledgeable Study Abroad Advisor
@@ -20,7 +35,7 @@ COMMUNICATION STYLE
 - If the student writes mostly in English, answer mainly in English but you may add
   short Burmese explanation lines for difficult or important points.
 - Always sound like a real, trained education consultant: polite, confident, practical.
-- Use short paragraphs, bullet points, and numbered steps for clarity.
+- Use short paragraphs, bullet points, and numbered steps for clarity (Markdown is supported).
 - Avoid robotic / generic AI phrases.
 
 ========================
@@ -29,41 +44,32 @@ SCOPE OF ADVICE
 Your role:
 - Explain university entry requirements, course selection, conditional/unconditional offers,
   CAS, credibility interview basics, tuition fees, and scholarships.
-- Compare countries and programs at a high level (UK, Canada, Australia, USA, Europe, New Zealand,
-  Singapore, Vietnam and other common study destinations).
+- Compare countries and programs at a high level (UK, Germany, Singapore, Canada, Australia,
+  USA, Europe, New Zealand, Vietnam and other common study destinations).
 - Provide general visa process guidance only. YOU ARE NOT AN IMMIGRATION LAWYER.
 
 When something depends on official rules or can change quickly, you MUST say clearly:
 “Please double-check this on the official website before making a decision.”
 
 ========================
-UNIVERSITY / PROGRAM SUGGESTIONS
+UNIVERSITY SEARCH (IMPORTANT)
 ========================
-The consultancy maintains curated lists of universities and programs, mainly drawn from
-trusted international recruitment platforms and partner networks (for example, large global
-aggregator platforms and institutional partnerships).
+You have a tool called `search_universities` that searches Abtrow's curated university list.
 
-You may use a mental model based on those kinds of partner lists to keep your suggestions
-realistic and aligned with what a real consultancy could offer, BUT:
-
-- You MUST NOT mention the names of those platforms (for example, you must NOT say
-  “GSP”, “upGrad”, “ApplyBoard”, or similar brands) in your answers.
-- You MUST NOT show or refer to their website URLs in your answers.
-- To the student, you simply talk about “universities”, “partner universities”, or
-  “options we often work with”, without naming any platform brand.
-
-When suggesting options:
-- Give realistic examples of universities by country and subject (e.g., “In the UK, some
-  universities that often accept applicants with IELTS 6.0 for Business or IT include
-  mid-range public universities and modern post-1992 universities.”).
-- Keep lists short and practical (for example 3–7 examples, not 20+).
-- If you are not sure about a very specific requirement, speak in terms of “typical ranges”
-  and advise the student to confirm on the chosen university’s own website.
-
-Encourage students to:
-- Tell you their preferred country, subject area, budget, and intake.
-- Share any university or course names/links they have already found, so you can comment
-  on suitability, requirements, and next steps.
+- Whenever the student asks which universities to apply to, or gives a country, intake,
+  subject or level, CALL `search_universities` with the filters you know from the WHOLE
+  conversation (not only the last message).
+- If key filters are missing, you may search with what you have, then ask for the missing
+  ones (country, intake, subject, UG/PG, IELTS score).
+- Present results as a short list. For each university show: the name as a Markdown link
+  using EXACTLY the `url` from the tool result, city, intakes, and IELTS/fees if provided.
+  If IELTS or fees are empty, say “check the course page”.
+- NEVER write a university URL that did not come from the tool. If the tool returns no
+  results, say our list has no match yet, suggest relaxing a filter, and invite them to
+  contact the Abtrow team (Viber/WhatsApp or info@abtrow.com) for a personalised shortlist.
+- You MUST NOT mention any recruitment platform or aggregator brands (for example “GSP”,
+  “upGrad”, “ApplyBoard”) or their URLs. Talk about “universities we work with”.
+- Never guarantee admission.
 
 ========================
 VISA / VFS / UKVI INFORMATION
@@ -73,8 +79,9 @@ For visa-related questions you MUST:
 - Always suggest they confirm on official websites.
 
 You may refer the student to:
-- Visa application centres & process information via VFS Global.
-- Detailed UK student visa information via the official UK government (UKVI) pages.
+- Visa application centres & process information via VFS Global (https://www.vfsglobal.com).
+- Detailed UK student visa information via the official UK government page
+  (https://www.gov.uk/student-visa).
 
 Rules:
 - Never give legal advice or guarantee visa outcomes.
@@ -91,7 +98,7 @@ LANGUAGE BEHAVIOUR EXAMPLES
 If the student writes in Burmese only:
 - Answer mainly in Burmese with professional tone, but keep important terms in English too.
   Example:
-  “UK MSc majority က IELTS 6.0 လောက်လိုပါတယ်။ သတ်မှတ်ချက်ကတော့ university마다
+  “UK MSc အများစုက IELTS 6.0 လောက်လိုပါတယ်။ သတ်မှတ်ချက်ကတော့ university တစ်ခုနဲ့တစ်ခု
    မတူနိုင်လို့ official website မှာ ထပ်စစ်ပေးသင့်ပါတယ်။”
 
 If the student writes in English:
@@ -101,317 +108,133 @@ If the student writes in English:
 GENERAL BEHAVIOUR
 ========================
 1. Do NOT repeat the question; start directly with a helpful answer.
-2. Ask for missing information (GPA/degree, IELTS/PTE/Duolingo, budget, preferred country, intake).
-3. Use realistic, honest guidance — no over-promising.
-4. If you are unsure, say you are unsure and advise checking the specific university
+2. Remember what the student already told you earlier in the chat; don't ask again.
+3. Ask for missing information (GPA/degree, IELTS/PTE/Duolingo, budget, preferred country, intake).
+4. Use realistic, honest guidance — no over-promising.
+5. If you are unsure, say you are unsure and advise checking the specific university
    or official government website.
-5. Always remain polite, encouraging, and professional. You represent Abtrow Education.
+6. Always remain polite, encouraging, and professional. You represent Abtrow Education.
 """
 
-HTML_PAGE = """
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Abtrow AI – Study Abroad Assistant</title>
-  <style>
-    body { 
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-        max-width: 780px; 
-        margin: 20px auto; 
-        padding: 0 12px; 
-        background: #0A1A3A;  /* Abtrow Navy Blue */
-        color: #F5F5F5;
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_universities",
+            "description": "Search Abtrow's curated university list. Returns universities with official links.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "country": {"type": "string", "description": "e.g. UK, Germany, Singapore"},
+                    "intake": {"type": "string", "description": "Intake month, e.g. September, January"},
+                    "subject": {"type": "string", "description": "Subject area, e.g. Business, Computer Science"},
+                    "level": {"type": "string", "enum": ["UG", "PG"], "description": "UG = bachelor, PG = master"},
+                    "ielts": {"type": "number", "description": "Student's overall IELTS score, if known"},
+                },
+                "additionalProperties": False,
+            },
+        },
     }
+]
 
-    #header {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 12px;
-        margin-bottom: 12px;
-    }
 
-    #header-logo {
-        width: 56px;
-        height: 56px;
-        border-radius: 999px;
-        overflow: hidden;
-        border: 2px solid #EAC56A;
-        flex-shrink: 0;
-        background: #0F1E55;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
+def run_tool(name, args):
+    if name == "search_universities":
+        results = search_universities(**{k: v for k, v in args.items()
+                                         if k in ("country", "intake", "subject", "level", "ielts")})
+        return {"count": len(results), "results": results}
+    return {"error": f"unknown tool {name}"}
 
-    #header-logo img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
 
-    #header-text h1 {
-        margin: 0;
-        font-size: 20px;
-        color: #F2D98B; /* Gold */
-        font-weight: 700;
-    }
+def clean_history(raw):
+    """Accept only user/assistant text messages from the browser, trimmed."""
+    history = []
+    if not isinstance(raw, list):
+        return history
+    for m in raw[-MAX_HISTORY:]:
+        if not isinstance(m, dict):
+            continue
+        role, content = m.get("role"), m.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            history.append({"role": role, "content": content.strip()[:MAX_MESSAGE_CHARS]})
+    return history
 
-    #header-text p {
-        margin: 2px 0 0 0;
-        font-size: 12px;
-        color: #D1D5DB;
-    }
-
-    #topbar { 
-        display: flex; 
-        justify-content: flex-end; 
-        align-items: center; 
-        margin: 4px 0 8px 0; 
-    }
-
-    #clearBtn { 
-        padding: 6px 12px; 
-        border-radius: 999px; 
-        border: none;
-        background: #E63946; 
-        color: white; 
-        font-size: 12px;
-        cursor: pointer;
-    }
-
-    #chat { 
-        border-radius: 14px; 
-        background: #0F1E55; /* Deep Royal Blue */
-        padding: 12px; 
-        height: 440px; 
-        overflow-y: auto; 
-        box-shadow: 0 0 12px rgba(242, 217, 139, 0.15);
-        margin-bottom: 10px;
-    }
-
-    .msg-user { text-align: right; margin: 8px 0; }
-    .msg-user span { 
-        display: inline-block; 
-        background: #EAC56A; /* Gold */ 
-        color: #0A1A3A;      /* Navy text */
-        padding: 8px 12px; 
-        border-radius: 12px 12px 0 12px; 
-        max-width: 82%; 
-        font-weight: 600;
-        white-space: pre-wrap;
-    }
-
-    .msg-bot { text-align: left; margin: 8px 0; }
-    .msg-bot span { 
-        display: inline-block; 
-        background: #112869;  /* Slightly brighter navy */
-        color: #F5F5F5; 
-        padding: 8px 12px; 
-        border-radius: 12px 12px 12px 0; 
-        max-width: 82%; 
-        border-left: 3px solid #EAC56A; /* Gold accent stripe */
-        white-space: pre-wrap;
-    }
-
-    #quickButtons {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 10px;
-    }
-
-    #quickButtons button {
-        padding: 8px 14px;
-        border-radius: 999px;
-        border: none;
-        background: linear-gradient(90deg, #EAC56A, #F2D98B);
-        color: #0A1A3A; 
-        font-weight: 600;
-        font-size: 13px;
-        cursor: pointer;
-    }
-
-    #quickButtons button:active {
-        transform: scale(0.95);
-    }
-
-    #inputRow { 
-        margin-top: 4px; 
-        display: flex; 
-        gap: 8px; 
-    }
-
-    #inputRow input { 
-        flex: 1; 
-        padding: 12px; 
-        border-radius: 999px; 
-        border: 1px solid #EAC56A; 
-        background: #0F1E55; 
-        color: #F5F5F5;
-    }
-
-    #inputRow input::placeholder {
-        color: #D1D5DB;
-    }
-
-    #inputRow button { 
-        padding: 12px 18px; 
-        border-radius: 999px; 
-        border: none;
-        background: linear-gradient(90deg, #EAC56A, #F2D98B);
-        color: #0A1A3A; 
-        font-weight: 700; 
-        cursor: pointer;
-    }
-
-    #inputRow button:active { 
-        transform: scale(0.97); 
-    }
-  </style>
-</head>
-<body>
-  <div id="header">
-    <div id="header-logo">
-      <!-- TODO: Replace the src URL below with your real logo URL -->
-      <img src="https://YOUR-LOGO-URL-HERE.png" alt="Abtrow Logo" />
-    </div>
-    <div id="header-text">
-      <h1>Abtrow AI – Study Abroad Assistant</h1>
-      <p>Smart guidance for Myanmar and Asian students</p>
-    </div>
-  </div>
-
-  <div id="topbar">
-    <button id="clearBtn" onclick="clearChat()">Clear</button>
-  </div>
-
-  <div id="chat"></div>
-
-  <div id="quickButtons">
-    <button onclick="quickSend('UK')">UK</button>
-    <button onclick="quickSend('New Zealand')">New Zealand</button>
-    <button onclick="quickSend('Vietnam')">Vietnam</button>
-    <button onclick="quickSend('Singapore')">Singapore</button>
-    <button onclick="quickSend('Canada')">Canada</button>
-    <button onclick="quickSend('Visa Help')">Visa Help</button>
-  </div>
-
-  <div id="inputRow">
-    <input id="msg" type="text" placeholder="Ask about courses, visas, scholarships..." />
-    <button onclick="sendMsg()">Send</button>
-  </div>
-
-  <script>
-    const chat = document.getElementById('chat');
-    const input = document.getElementById('msg');
-
-    // ✅ Abtrow AI Welcome Message (auto displayed on page load)
-    const welcomeMessage = `
-မင်္ဂလာပါ! Abtrow AI မှ ကြိုဆိုပါတယ်! 🌟
-နိုင်ငံခြားမှာ သင့်ရဲ့အိပ်မက်တွေကို အမြန်ဆုံး အကောင်အထည်ဖော်နိုင်ဖို့ စိတ်ကူးရှိသူတိုင်းအတွက် 
-                     🤖Abtrow AI🤖 
-         က မြန်ဆန်ပြီး တိကျတဲ့ အကြံဉာဏ်တွေ ပေးနေပါပြီ။
-       ဖုန်း၊ Email မှတစ်ဆင့်လည်း ဆက်သွယ်မေးမြန်းနိုင်ပါတယ်
-       📞 +၉၅၉ ၈၉၁ ၁၁၈ ၈၇ (Viber/WhatsApp)
-       📧 info@abtrow.com
-ဘယ်အကြောင်းအရာကနေ စတင်ဆွေးနွေးချင်ပါသလဲ?
-`;
-
-    function showWelcome() {
-        addMessage(welcomeMessage, 'bot');
-    }
-
-    function addMessage(text, sender) {
-      const div = document.createElement('div');
-      div.className = sender === 'user' ? 'msg-user' : 'msg-bot';
-      const span = document.createElement('span');
-      span.textContent = text;
-      div.appendChild(span);
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    async function sendMsg() {
-      const text = input.value.trim();
-      if (!text) return;
-      addMessage(text, 'user');
-      input.value = '';
-
-      try {
-        const res = await fetch('/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
-        const data = await res.json();
-        addMessage(data.reply, 'bot');
-      } catch (e) {
-        addMessage('Sorry, there was an error connecting to Abtrow AI.', 'bot');
-      }
-    }
-
-    function clearChat() {
-      chat.innerHTML = '';
-      showWelcome();
-    }
-
-    function quickSend(text) {
-      addMessage(text, 'user');
-      sendQuick(text);
-    }
-
-    async function sendQuick(text) {
-      try {
-        const res = await fetch('/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
-        const data = await res.json();
-        addMessage(data.reply, 'bot');
-      } catch (e) {
-        addMessage('Sorry, there was an error connecting to Abtrow AI.', 'bot');
-      }
-    }
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') sendMsg();
-    });
-
-    // Show the welcome message automatically on first load
-    window.onload = showWelcome;
-  </script>
-</body>
-</html>
-"""
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_PAGE)
+    return render_template("index.html", logo_url=LOGO_URL)
+
+
+@app.route("/api/filters")
+def api_filters():
+    return jsonify(filter_options())
+
+
+@app.route("/api/universities")
+@limiter.limit("60 per minute")
+def api_universities():
+    results = search_universities(
+        country=request.args.get("country") or None,
+        intake=request.args.get("intake") or None,
+        subject=request.args.get("subject") or None,
+        level=request.args.get("level") or None,
+        limit=20,
+    )
+    return jsonify({"results": results})
+
 
 @app.route("/chat", methods=["POST"])
+@limiter.limit("20 per minute; 200 per day")
 def chat_endpoint():
-    data = request.get_json() or {}
-    user_message = data.get("message", "").strip()
+    data = request.get_json(silent=True) or {}
 
-    if not user_message:
-        return jsonify({"reply": "Please type a question first."})
+    # New format: {"messages": [{role, content}, ...]}; old format {"message": "..."} still works
+    history = clean_history(data.get("messages"))
+    if not history and isinstance(data.get("message"), str) and data["message"].strip():
+        history = [{"role": "user", "content": data["message"].strip()[:MAX_MESSAGE_CHARS]}]
+
+    if not history or history[-1]["role"] != "user":
+        return jsonify({"reply": "Please type a question first."}), 400
+
+    messages = [{"role": "system", "content": ABTROW_PROMPT}] + history
 
     try:
-        completion = client.chat.completions.create(
-            model="gpt-5-mini",
-            messages=[
-                {"role": "system", "content": ABTROW_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-        )
-        reply = completion.choices[0].message.content
-        return jsonify({"reply": reply})
+        for _ in range(MAX_TOOL_ROUNDS):
+            completion = client.chat.completions.create(model=MODEL, messages=messages, tools=TOOLS)
+            msg = completion.choices[0].message
+            if not msg.tool_calls:
+                return jsonify({"reply": msg.content or "Sorry, I couldn't generate an answer."})
+
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in msg.tool_calls
+                ],
+            })
+            for tc in msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                messages.append({"role": "tool", "tool_call_id": tc.id,
+                                 "content": json.dumps(run_tool(tc.function.name, args))})
+
+        # Too many tool rounds: ask for a final answer without tools
+        completion = client.chat.completions.create(model=MODEL, messages=messages)
+        return jsonify({"reply": completion.choices[0].message.content})
     except Exception as e:
-        print("ERROR:", e)
-        return jsonify({"reply": "Sorry, the AI had an error: " + str(e)}), 500
+        app.logger.exception("Chat error: %s", e)  # details stay in the server logs
+        return jsonify({"reply": "Sorry, Abtrow AI is busy right now. Please try again in a moment, "
+                                 "or contact us on Viber/WhatsApp or info@abtrow.com."}), 500
+
+
+@app.errorhandler(429)
+def too_many_requests(_e):
+    return jsonify({"reply": "You're sending messages too quickly. Please wait a minute and try again."}), 429
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
