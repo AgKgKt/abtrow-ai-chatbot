@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Abtrow AI – Study Abroad Assistant</title>
+  <!-- Served from /static so the page works even where CDNs are slow or blocked -->
+  <script src="{{ url_for('static', filename='marked.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='purify.min.js') }}"></script>
+  <style>
+    :root {
+      --navy: #0A1A3A; --royal: #0F1E55; --bubble: #112869;
+      --gold: #EAC56A; --gold-light: #F2D98B; --text: #F5F5F5; --muted: #D1D5DB; --red: #E63946;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Padauk", "Myanmar Text", sans-serif;
+      max-width: 780px; margin: 20px auto; padding: 0 12px;
+      background: var(--navy); color: var(--text);
+    }
+    #header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    #header-logo {
+      width: 56px; height: 56px; border-radius: 999px; overflow: hidden; flex-shrink: 0;
+      border: 2px solid var(--gold); background: var(--royal);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--gold-light); font-weight: 800; font-size: 24px;
+    }
+    #header-logo img { width: 100%; height: 100%; object-fit: cover; }
+    #header-text h1 { margin: 0; font-size: 20px; color: var(--gold-light); font-weight: 700; }
+    #header-text p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+    /* University finder */
+    #finder {
+      background: var(--royal); border: 1px solid rgba(234,197,106,.35); border-radius: 14px;
+      padding: 10px 12px; margin-bottom: 10px;
+    }
+    #finder summary { cursor: pointer; font-weight: 700; color: var(--gold-light); }
+    #filters { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 8px; margin-top: 10px; }
+    #filters select, #filters button {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--gold);
+      background: var(--navy); color: var(--text); font-size: 13px; min-width: 0;
+    }
+    #filters button {
+      background: linear-gradient(90deg, var(--gold), var(--gold-light)); color: var(--navy);
+      font-weight: 700; cursor: pointer; border: none;
+    }
+    #finderResults { margin-top: 10px; display: grid; gap: 8px; }
+    .uni-card { background: var(--bubble); border-left: 3px solid var(--gold); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+    .uni-card a { color: var(--gold-light); font-weight: 700; font-size: 14px; }
+    .uni-card .meta { color: var(--muted); margin-top: 2px; }
+    .empty { color: var(--muted); font-size: 13px; }
+
+    #topbar { display: flex; justify-content: flex-end; margin: 4px 0 8px; }
+    #clearBtn {
+      padding: 6px 12px; border-radius: 999px; border: none; background: var(--red);
+      color: white; font-size: 12px; cursor: pointer;
+    }
+    #chat {
+      border-radius: 14px; background: var(--royal); padding: 12px; height: 440px;
+      overflow-y: auto; box-shadow: 0 0 12px rgba(242,217,139,.15); margin-bottom: 10px;
+    }
+    .msg-user { text-align: right; margin: 8px 0; }
+    .msg-user span {
+      display: inline-block; background: var(--gold); color: var(--navy); padding: 8px 12px;
+      border-radius: 12px 12px 0 12px; max-width: 82%; font-weight: 600; white-space: pre-wrap; text-align: left;
+    }
+    .msg-bot { text-align: left; margin: 8px 0; }
+    .msg-bot .bubble {
+      display: inline-block; background: var(--bubble); color: var(--text); padding: 8px 12px;
+      border-radius: 12px 12px 12px 0; max-width: 82%; border-left: 3px solid var(--gold);
+      line-height: 1.5; overflow-wrap: anywhere;
+    }
+    .msg-bot .bubble.welcome { white-space: pre-wrap; }
+    .bubble p { margin: 0 0 8px; } .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 4px 0 8px; padding-left: 20px; }
+    .bubble a { color: var(--gold-light); text-decoration: underline; }
+    .typing { color: var(--muted); font-style: italic; }
+
+    #quickButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    #quickButtons button, #inputRow button {
+      border-radius: 999px; border: none; cursor: pointer; color: var(--navy);
+      background: linear-gradient(90deg, var(--gold), var(--gold-light));
+    }
+    #quickButtons button { padding: 8px 14px; font-weight: 600; font-size: 13px; }
+    #quickButtons button:active { transform: scale(.95); }
+    #inputRow { display: flex; gap: 8px; }
+    #inputRow input {
+      flex: 1; min-width: 0; padding: 12px; border-radius: 999px; border: 1px solid var(--gold);
+      background: var(--royal); color: var(--text); font-size: 15px;
+    }
+    #inputRow input::placeholder { color: var(--muted); }
+    #inputRow button { padding: 12px 18px; font-weight: 700; }
+    #inputRow button:disabled { opacity: .6; cursor: wait; }
+
+    @media (max-width: 600px) {
+      body { margin: 10px auto; }
+      #filters { grid-template-columns: 1fr 1fr; }
+      #filters button { grid-column: span 2; }
+      #chat { height: 60vh; }
+      .msg-user span, .msg-bot .bubble { max-width: 92%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="header-logo">
+      {% if logo_url %}<img src="{{ logo_url }}" alt="Abtrow logo" />{% else %}A{% endif %}
+    </div>
+    <div id="header-text">
+      <h1>Abtrow AI – Study Abroad Assistant</h1>
+      <p>Smart guidance for Myanmar and Asian students</p>
+    </div>
+  </div>
+
+  <details id="finder">
+    <summary>🎓 Find universities by country, intake &amp; subject</summary>
+    <div id="filters">
+      <select id="fCountry"><option value="">Any country</option></select>
+      <select id="fIntake"><option value="">Any intake</option></select>
+      <select id="fSubject"><option value="">Any subject</option></select>
+      <select id="fLevel">
+        <option value="">UG or PG</option>
+        <option value="UG">Bachelor (UG)</option>
+        <option value="PG">Master (PG)</option>
+      </select>
+      <button onclick="findUniversities()">Search</button>
+    </div>
+    <div id="finderResults"></div>
+  </details>
+
+  <div id="topbar"><button id="clearBtn" onclick="clearChat()">Clear</button></div>
+
+  <div id="chat"></div>
+
+  <div id="quickButtons">
+    <button onclick="quickSend('UK')">UK</button>
+    <button onclick="quickSend('Germany')">Germany</button>
+    <button onclick="quickSend('Singapore')">Singapore</button>
+    <button onclick="quickSend('New Zealand')">New Zealand</button>
+    <button onclick="quickSend('Canada')">Canada</button>
+    <button onclick="quickSend('Vietnam')">Vietnam</button>
+    <button onclick="quickSend('Which universities can I apply to?')">Find a university</button>
+    <button onclick="quickSend('Visa Help')">Visa Help</button>
+  </div>
+
+  <div id="inputRow">
+    <input id="msg" type="text" maxlength="2000" placeholder="Ask about courses, visas, scholarships..." />
+    <button id="sendBtn" onclick="sendMsg()">Send</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('msg');
+    const sendBtn = document.getElementById('sendBtn');
+    const MAX_HISTORY = 12;
+    let history = [];   // [{role:'user'|'assistant', content}]
+    let busy = false;
+
+    const welcomeMessage = `မင်္ဂလာပါ! Abtrow AI မှ ကြိုဆိုပါတယ်! 🌟
+နိုင်ငံခြားမှာ သင့်ရဲ့အိပ်မက်တွေကို အမြန်ဆုံး အကောင်အထည်ဖော်နိုင်ဖို့ စိတ်ကူးရှိသူတိုင်းအတွက်
+🤖 Abtrow AI 🤖 က မြန်ဆန်ပြီး တိကျတဲ့ အကြံဉာဏ်တွေ ပေးနေပါပြီ။
+ဖုန်း၊ Email မှတစ်ဆင့်လည်း ဆက်သွယ်မေးမြန်းနိုင်ပါတယ်
+📞 +၉၅၉ ၈၉၁ ၁၁၈ ၈၇ (Viber/WhatsApp)
+📧 info@abtrow.com
+ဘယ်အကြောင်းအရာကနေ စတင်ဆွေးနွေးချင်ပါသလဲ?`;
+
+    // Safe Markdown → HTML, links open in a new tab
+    const canRender = typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined';
+    if (canRender) {
+      DOMPurify.addHook('afterSanitizeAttributes', node => {
+        if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
+      });
+    }
+    function renderMarkdown(text) {
+      if (!canRender) {  // fallback: plain text if the libraries failed to load
+        const d = document.createElement('div'); d.style.whiteSpace = 'pre-wrap'; d.textContent = text || '';
+        return d.outerHTML;
+      }
+      return DOMPurify.sanitize(marked.parse(text || '', { breaks: true }));
+    }
+
+    function addMessage(text, sender, opts = {}) {
+      const div = document.createElement('div');
+      div.className = sender === 'user' ? 'msg-user' : 'msg-bot';
+      const el = document.createElement('span');
+      if (sender === 'user') {
+        el.textContent = text;
+      } else {
+        el.className = 'bubble' + (opts.welcome ? ' welcome' : '') + (opts.typing ? ' typing' : '');
+        if (opts.welcome || opts.typing) el.textContent = text; else el.innerHTML = renderMarkdown(text);
+      }
+      div.appendChild(el);
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    async function send(text) {
+      text = (text || '').trim();
+      if (!text || busy) return;
+      busy = true; sendBtn.disabled = true;
+      addMessage(text, 'user');
+      history.push({ role: 'user', content: text });
+      const typing = addMessage('Abtrow AI is typing…', 'bot', { typing: true });
+
+      let reply;
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: history.slice(-MAX_HISTORY) })
+        });
+        const data = await res.json();
+        reply = data.reply || 'Sorry, something went wrong.';
+        if (res.ok) history.push({ role: 'assistant', content: reply });
+        else history.pop();   // don't keep a failed question in the memory
+      } catch (e) {
+        reply = 'Sorry, there was an error connecting to Abtrow AI. Please check your internet and try again.';
+        history.pop();
+      }
+      typing.remove();
+      addMessage(reply, 'bot');
+      busy = false; sendBtn.disabled = false; input.focus();
+    }
+
+    function sendMsg() { const t = input.value; input.value = ''; send(t); }
+    function quickSend(text) { send(text); }
+
+    function clearChat() {
+      chat.innerHTML = '';
+      history = [];
+      addMessage(welcomeMessage, 'bot', { welcome: true });
+    }
+
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) sendMsg(); });
+
+    // ---------- University finder (no AI cost) ----------
+    function fillSelect(id, values) {
+      const sel = document.getElementById(id);
+      values.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+    }
+
+    async function loadFilters() {
+      try {
+        const f = await (await fetch('/api/filters')).json();
+        fillSelect('fCountry', f.countries);
+        fillSelect('fIntake', f.intakes);
+        fillSelect('fSubject', f.subjects);
+      } catch (e) { /* finder stays usable with "Any" */ }
+    }
+
+    async function findUniversities() {
+      const box = document.getElementById('finderResults');
+      const params = new URLSearchParams();
+      [['country','fCountry'],['intake','fIntake'],['subject','fSubject'],['level','fLevel']].forEach(([k, id]) => {
+        const v = document.getElementById(id).value; if (v) params.set(k, v);
+      });
+      box.innerHTML = '<div class="empty">Searching…</div>';
+      try {
+        const { results } = await (await fetch('/api/universities?' + params)).json();
+        box.innerHTML = '';
+        if (!results.length) {
+          box.innerHTML = '<div class="empty">No match in our list yet. Try another filter, or message us on Viber/WhatsApp for a personalised shortlist.</div>';
+          return;
+        }
+        results.forEach(u => {
+          const card = document.createElement('div'); card.className = 'uni-card';
+          const a = document.createElement('a'); a.href = u.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.textContent = u.university;
+          const meta = document.createElement('div'); meta.className = 'meta';
+          const bits = [u.city && `${u.city}, ${u.country}`, u.level.join('/'), 'Intakes: ' + u.intakes.join(', ')];
+          if (u.ielts_min) bits.push('IELTS ' + u.ielts_min + '+');
+          if (u.tuition_per_year) bits.push(u.tuition_per_year + '/yr');
+          if (u.scholarship) bits.push('Scholarship: ' + u.scholarship);
+          meta.textContent = bits.filter(Boolean).join(' · ');
+          card.append(a, meta); box.appendChild(card);
+        });
+      } catch (e) {
+        box.innerHTML = '<div class="empty">Could not load universities. Please try again.</div>';
+      }
+    }
+
+    window.onload = () => { clearChat(); loadFilters(); };
+  </script>
+</body>
+</html>
